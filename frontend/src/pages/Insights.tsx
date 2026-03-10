@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { aiApi } from '../api/ai';
+import { aiApi, type AiInsightsResponse } from '../api/ai';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Sparkles, PiggyBank, Wallet } from 'lucide-react';
 
@@ -21,10 +21,14 @@ export default function Insights() {
     setLoading('advice');
     setError('');
     try {
-      const { data } = await aiApi.advice();
-      setAdvice(data.advice);
-    } catch (err) {
-      setError('Failed to fetch advice');
+      const { data } = await aiApi.insights();
+      const insights: AiInsightsResponse = data;
+      setAdvice(insights.summary);
+      if (insights.recommendations?.length) {
+        setSavings(insights.recommendations.map((r) => `• ${r}`).join('\n'));
+      }
+    } catch {
+      setError('Failed to fetch AI insights');
     } finally {
       setLoading(null);
     }

@@ -13,11 +13,15 @@ import { authRouter } from './routes/auth.routes';
 import { transactionsRouter } from './routes/transactions.routes';
 import { reportsRouter } from './routes/reports.routes';
 import { aiRouter } from './routes/ai.routes';
+import { dashboardRouter } from './routes/dashboard.routes';
+import { aiInsightsRouter } from './routes/ai-insights.routes';
+import { budgetRouter } from './routes/budget.routes';
 import { errorHandler } from './middleware/error.middleware';
 import { authMiddleware } from './middleware/auth.middleware';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+// Allow overriding port via env; default to 5001 to avoid conflicts
+const PORT = Number(process.env.PORT) || 5001;
 
 // Security middleware
 app.use(helmet());
@@ -49,6 +53,9 @@ app.use('/api/auth', authRouter);
 app.use('/api/transactions', authMiddleware, transactionsRouter);
 app.use('/api/reports', authMiddleware, reportsRouter);
 app.use('/api/ai', authMiddleware, aiRouter);
+app.use('/api/dashboard', authMiddleware, dashboardRouter);
+app.use('/api/ai-insights', authMiddleware, aiInsightsRouter);
+app.use('/api/budget-suggestions', authMiddleware, budgetRouter);
 
 // 404 handler
 app.use((_, res) => res.status(404).json({ error: 'Not found' }));

@@ -33,17 +33,16 @@ export function parseBankStatementCSV(csvBuffer: Buffer): ParsedTransaction[] {
   const keys = Object.keys(firstRow);
 
   // Detect column mapping
-  const dateCol = keys.find(k => 
-    /date|posted|trans.*date/i.test(k)
-  ) || keys[0];
+  const dateCol =
+    keys.find((k) => /date|posted|trans.*date/i.test(k)) || keys[0];
 
-  const descCol = keys.find(k => 
-    /description|memo|details|narrative|merchant/i.test(k)
-  ) || keys.find(k => k.includes('desc')) || keys[1];
+  const descCol =
+    keys.find((k) => /description|memo|details|narrative|merchant/i.test(k)) ||
+    keys.find((k) => k.includes('desc')) ||
+    keys[1];
 
-  const amountCol = keys.find(k => 
-    /^amount$|debit|credit/i.test(k)
-  );
+  // Prefer a dedicated "amount" column if present
+  const amountCol = keys.find((k) => /^amount$/i.test(k));
   const debitCol = keys.find(k => /debit/i.test(k));
   const creditCol = keys.find(k => /credit/i.test(k));
 
@@ -54,22 +53,50 @@ export function parseBankStatementCSV(csvBuffer: Buffer): ParsedTransaction[] {
     const desc = row[descCol] || row[keys[1]] || '';
 
     let amount = 0;
+    let type: 'income' | 'expense' = 'expense';
+
     if (amountCol) {
-      const val = String(row[amountCol] || '').replace(/[,$\s]/g, '');
-      amount = parseFloat(val) || 0;
-    } else if (debitCol && creditCol) {
-      const debit = parseFloat(String(row[debitCol] || '').replace(/[,$\s]/g, '')) || 0;
-      const credit = parseFloat(String(row[creditCol] || '').replace(/[,$\s]/g, '')) || 0;
-      amount = credit - debit; // Positive = income, Negative = expense
+      // Single amount column – sign determines income vs expense
+      const raw = String(row[amountCol] || '').replace(/[,$\s]/g, '');
+      const parsed = parseFloat(raw);
+      if (Number.isNaN(parsed)) continue;
+      amount = parsed;
+      type = parsed >= 0 ? 'income' : 'expense';
+    } else if (debitCol || creditCol) {
+      // Separate debit / credit columns
+      const debit =
+        parseFloat(
+          String(row[debitCol ?? ''] || '').replace(/[,$\s]/g, '')
+        ) || 0;
+      const credit =
+        parseFloat(
+          String(row[creditCol ?? ''] || '').replace(/[,$\s]/g, '')
+        ) || 0;
+
+      if (credit > 0 && debit === 0) {
+        // Credit → income
+        amount = credit;
+        type = 'income';
+      } else if (debit > 0 && credit === 0) {
+        // Debit → expense
+        amount = -debit;
+        type = 'expense';
+      } else {
+        // Fallback: income minus expense
+        amount = credit - debit;
+        type = amount >= 0 ? 'income' : 'expense';
+      }
+    } else {
+      // No recognizable amount column
+      continue;
     }
 
-    if (!dateStr || isNaN(amount)) continue;
+    if (!dateStr || Number.isNaN(amount)) continue;
 
     // Normalize date to YYYY-MM-DD
     const date = normalizeDate(dateStr);
     if (!date) continue;
 
-    const type = amount >= 0 ? 'income' : 'expense';
     const category = categorizeTransaction(desc, amount);
 
     transactions.push({

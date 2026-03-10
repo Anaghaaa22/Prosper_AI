@@ -81,3 +81,70 @@ Suggest a simple 50/30/20 or customized budget allocation. Provide specific doll
   });
   return completion.choices[0]?.message?.content?.trim() || 'Unable to generate budget suggestions.';
 }
+
+export interface AiInsightContext {
+  totalIncome: number;
+  totalExpenses: number;
+  netBalance: number;
+  transactionCount: number;
+  categories: { category: string; totalAmount: number }[];
+}
+
+export interface AiInsightsResult {
+  summary: string;
+  recommendations: string[];
+}
+
+/**
+ * Generate combined AI insights (summary + recommendations list)
+ */
+export async function generateAiInsights(context: AiInsightContext): Promise<AiInsightsResult> {
+  const prompt = `
+You are a helpful financial coach.
+
+Here is a user's financial overview:
+- Total income: $${context.totalIncome.toFixed(2)}
+- Total expenses: $${context.totalExpenses.toFixed(2)}
+- Net balance: $${context.netBalance.toFixed(2)}
+- Total transactions: ${context.transactionCount}
+
+Spending by category:
+${context.categories
+  .map((c) => `- ${c.category}: $${c.totalAmount.toFixed(2)}`)
+  .join('\n')}
+
+Analyze their spending habits and return JSON with this shape:
+{
+  "summary": "1-2 sentence high-level summary",
+  "recommendations": [
+    "short, actionable recommendation 1",
+    "short, actionable recommendation 2"
+  ]
+}
+
+Only output valid JSON, no extra text.
+`;
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-3.5-turbo',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 400,
+    temperature: 0.7,
+  });
+
+  const content = completion.choices[0]?.message?.content?.trim() || '';
+
+  try {
+    const parsed = JSON.parse(content) as AiInsightsResult;
+    if (!parsed.summary) {
+      return { summary: content, recommendations: [] };
+    }
+    return {
+      summary: parsed.summary,
+      recommendations: parsed.recommendations || [],
+    };
+  } catch {
+    return { summary: content, recommendations: [] };
+  }
+}
+

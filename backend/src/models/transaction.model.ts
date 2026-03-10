@@ -18,6 +18,7 @@ export interface Transaction {
 
 export interface TransactionCreate {
   user_id: string;
+  account_id?: string | null;
   date: string;
   description: string;
   amount: number;
@@ -28,12 +29,13 @@ export interface TransactionCreate {
 
 export async function createTransaction(data: TransactionCreate): Promise<Transaction> {
   const rows = await query<Transaction>(
-    `INSERT INTO transactions (user_id, date, description, amount, category, raw_category, type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO transactions (user_id, account_id, date, description, amount, category, raw_category, type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (user_id, date, description, amount) DO NOTHING
      RETURNING *`,
     [
       data.user_id,
+      data.account_id || null,
       data.date,
       data.description,
       data.amount,
@@ -50,11 +52,20 @@ export async function createManyTransactions(transactions: TransactionCreate[]):
   let inserted = 0;
   for (const t of transactions) {
     const rows = await query<{ id: string }>(
-      `INSERT INTO transactions (user_id, date, description, amount, category, raw_category, type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO transactions (user_id, account_id, date, description, amount, category, raw_category, type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id, date, description, amount) DO NOTHING
        RETURNING id`,
-      [t.user_id, t.date, t.description, t.amount, t.category || null, t.raw_category || null, t.type || 'expense']
+      [
+        t.user_id,
+        t.account_id || null,
+        t.date,
+        t.description,
+        t.amount,
+        t.category || null,
+        t.raw_category || null,
+        t.type || 'expense',
+      ]
     );
     if (rows.length > 0) inserted++;
   }
@@ -78,6 +89,92 @@ export async function getByUserId(
     'SELECT * FROM transactions WHERE user_id = $1 ORDER BY date DESC',
     [userId]
   );
+}
+
+export interface DashboardSummary {
+  totalIncome: number;
+  totalExpenses: number;
+  netBalance: number;
+  transactionCount: number;
+}
+
+export interface CategoryBreakdown {
+  category: string;
+  totalAmount: number;
+}
+
+export interface MonthlyTrend {
+  month: string; // e.g. 2026-03
+  totalExpenses: number;
+}
+
+export async function getDashboardSummary(userId: string): Promise<DashboardSummary> {
+  const rows = await query<{ income: string; expenses: string; count: string }>(
+    `SELECT
+       COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0)::text AS income,
+       COALESCE(SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END), 0)::text AS expenses,
+       COUNT(*)::text AS count
+     FROM transactions
+     WHERE user_id = $1`,
+    [userId]
+  );
+
+  const row = rows[0] ?? { income: '0', expenses: '0', count: '0' };
+  const totalIncome = parseFloat(row.income || '0');
+  const totalExpenses = parseFloat(row.expenses || '0');
+
+  console.log('[dashboard] summary', { userId, totalIncome, totalExpenses, count: row.count });
+
+  return {
+    totalIncome,
+    totalExpenses,
+    netBalance: totalIncome - totalExpenses,
+    transactionCount: parseInt(row.count || '0', 10),
+  };
+}
+
+export async function getCategoryBreakdown(userId: string): Promise<CategoryBreakdown[]> {
+  const rows = await query<{ category: string | null; total_amount: string }>(
+    `SELECT category, SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END) AS total_amount
+     FROM transactions
+     WHERE user_id = $1
+     GROUP BY category
+     ORDER BY total_amount DESC`,
+    [userId]
+  );
+
+  const result = rows.map((r) => ({
+    category: r.category || 'Uncategorized',
+    totalAmount: parseFloat(r.total_amount || '0'),
+  }));
+
+  console.log('[dashboard] categories', { userId, categories: result.length });
+
+  return result;
+}
+
+export async function getMonthlyTrends(userId: string, limit = 6): Promise<MonthlyTrend[]> {
+  const rows = await query<{ month: string; total_expenses: string }>(
+    `SELECT
+       to_char(date_trunc('month', date), 'YYYY-MM') AS month,
+       SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END)::text AS total_expenses
+     FROM transactions
+     WHERE user_id = $1
+     GROUP BY 1
+     ORDER BY 1`,
+    [userId]
+  );
+
+  const mapped = rows.map((r) => ({
+    month: r.month,
+    totalExpenses: parseFloat(r.total_expenses || '0'),
+  }));
+
+  const sliced = mapped.slice(-limit);
+
+  console.log('[dashboard] trends', { userId, points: sliced.length });
+
+  return sliced;
 }
 
 export async function getMonthlySummary(userId: string, year: number, month: number) {
